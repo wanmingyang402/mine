@@ -1,0 +1,22 @@
+package SRTDivider
+
+import chisel3._
+
+class multiplexer(width: Int) extends Module {
+  val io = IO(new Bundle {
+    val in0 = Input(UInt(width.W))
+    val in1 = Input(UInt(width.W))
+    val enable = Input(Bool())
+    val select = Input(Bool())
+    val out = Output(UInt(width.W))
+  })
+  when(io.enable){
+    when(io.select){
+      io.out := io.in1
+    }.otherwise{
+      io.out := io.in0
+    }
+  }.otherwise{
+    io.out := 0.U
+  }
+}
