@@ -1,0 +1,93 @@
+package SRTDivider
+
+import chisel3._
+import chisel3.util._
+
+class SRTDivider(width: Int) extends Module {
+  val io = IO(new Bundle {
+    val dividend = Input(UInt(width.W))
+    val divisor = Input(UInt(width.W))
+    val valid = Input(Bool())
+    val quotient = Output(UInt(width.W))
+    val remainder = Output(UInt(width.W))
+  })
+  assert(io.divisor =/= 0.U, "divisor cannot be 0!")
+
+  private val msb1 = Module(new MostSignificantOne(width, 6))
+  msb1.io.in := io.divisor
+  private val msb2 = Module(new MostSignificantOne(width, 6))
+  msb2.io.in := io.dividend
+
+  private val ready :: running :: Nil = Enum(2)
+  private val State = RegInit(ready)
+  private val Non0Reg = Reg(UInt(width.W))
+  private val SignReg = Reg(UInt(width.W))
+  private val u = Reg(UInt((2 * width + 1).W))
+  private val v = Reg(UInt((2 * width + 1).W))
+  private val t = u(2 * width, 2 * width - 3) + v(2 * width, 2 * width - 3)
+  private val Non0 = !(t(2) && t(3) && t(1))
+  private val Sign = t(3) && ((!t(2)) || (!t(1)))
+
+
+  private val counter = Module(new SimpleCounter(width - 1))
+  counter.io.en := (State === running)
+
+  private val mux = Module(new multiplexer(2 * width + 1))
+  mux.io.in0 := ((~io.divisor).asUInt + 1.U).asUInt << ((2 * width).asUInt - msb1.io.out - 1.U)
+  mux.io.in1 := io.divisor << ((2 * width).asUInt - msb1.io.out - 1.U)
+  mux.io.enable := Non0
+  mux.io.select := Sign
+  private val CSA1 = Module(new CarrySaveAdder(2 * width + 1))
+  CSA1.io.x := u << 1
+  CSA1.io.y := v << 1
+  CSA1.io.z := mux.io.out
+  private val CSA2 = Module(new CarrySaveAdder(2 * width + 1))
+  CSA2.io.x := io.dividend << ((2 * width).asUInt - msb2.io.out - 1.U)
+  CSA2.io.y := 0.U
+  CSA2.io.z := ((~Cat(0.U, io.divisor)).asUInt + 1.U).asUInt << ((2 * width).asUInt - msb1.io.out - 1.U)
+
+  switch(State){
+    is(ready){
+      when(io.valid){
+        State := running
+        u := CSA2.io.sum
+        v := CSA2.io.carry << 1
+        Non0Reg := 1.U
+        SignReg := 0.U
+      }
+    }
+    is(running){
+      when(io.valid){
+        when(counter.io.overflow === false.B) {
+          when(counter.io.out < (msb2.io.out - msb1.io.out).asUInt) {
+          u := CSA1.io.sum
+          v := CSA1.io.carry << 1
+          Non0Reg := (Non0Reg << 1).asUInt | Non0
+          SignReg := (SignReg << 1).asUInt | Sign
+          }
+        }.otherwise{
+          u := CSA2.io.sum
+          v := CSA2.io.carry << 1
+          Non0Reg := 1.U
+          SignReg := 0.U
+        }
+      }.otherwise{State := ready}
+    }
+  }
+
+  private val PartialRemainder = WireInit(0.U((2 * width + 1).W))
+    PartialRemainder := (u + v)(2 * width, 0)
+
+  when(io.divisor > io.dividend) {
+    io.remainder := io.dividend
+    io.quotient := 0.U
+  }.otherwise {
+    when(PartialRemainder(2 * width) =/= 0.U) {
+      io.remainder := (Cat(Fill(width, 1.U), PartialRemainder(2 * width, width)) >> (width.asUInt - msb1.io.out - 1.U)) + io.divisor
+      io.quotient := Cat(1.U, ~(Non0Reg & SignReg)) + ((~SignReg).asUInt & Non0Reg)
+    }.otherwise {
+      io.remainder := PartialRemainder(2 * width, width) >> (width.asUInt - msb1.io.out - 1.U)
+      io.quotient := Cat(1.U, ~(Non0Reg & SignReg)) + ((~SignReg).asUInt & Non0Reg) + 1.U
+    }
+  }
+}
