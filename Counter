@@ -1,0 +1,25 @@
+package SRTDivider
+
+import chisel3._
+
+class SimpleCounter(t: Int) extends Module{
+  val io = IO(new Bundle{
+    val en = Input(Bool())
+    val out =Output(UInt(8.W))
+    val overflow = Output(Bool())
+  })
+
+  private val state = RegInit(0.U(8.W))
+  private val nextState = state + 1.U
+  when(io.en){
+    when(state < t.U){
+      state := nextState
+    }.otherwise{
+      state := 0.U
+    }
+  }.otherwise{
+    state := 0.U
+  }
+  io.out := state
+  io.overflow := (state === t.U).asBool
+}
